@@ -16,6 +16,62 @@ import {
   setDoc,
 } from "firebase/firestore";
 
+import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
+
+const exportExpensesToExcel = (expenses) => {
+  const rows = [];
+
+  expenses.forEach((expense) => {
+    const {
+      date,
+      description,
+      totalAmount,
+      paidBy,
+      participants,
+      splitType,
+      allocations = {},
+    } = expense;
+
+    const baseRow = {
+      Date: date,
+      "Activity/Item": description,
+      "Cost (USD)": parseFloat(totalAmount),
+      "Paid By": paidBy,
+      Participants: participants.join(", "),
+      "Equally Split?": splitType === "equal" ? 1 : 0,
+    };
+
+    // Fill in shares per participant
+    participants.forEach((person) => {
+      let shareUSD = 0;
+      if (splitType === "equal") {
+        shareUSD = totalAmount / participants.length;
+      } else if (splitType === "percent") {
+        shareUSD = (totalAmount * parseFloat(allocations[person] || 0)) / 100;
+      } else if (splitType === "custom") {
+        shareUSD = parseFloat(allocations[person] || 0);
+      }
+
+      baseRow[`${person}’s Share (USD)`] = parseFloat(shareUSD.toFixed(2));
+    });
+
+    rows.push(baseRow);
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Expense Tracker");
+
+  const excelBuffer = XLSX.write(workbook, {
+    bookType: "xlsx",
+    type: "array",
+  });
+
+  const blob = new Blob([excelBuffer], { type: "application/octet-stream" });
+  saveAs(blob, "TexasHouseExpenses.xlsx");
+};
+
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics"; // Analytics is imported but not explicitly used in the app logic
@@ -461,6 +517,12 @@ function App() {
             className="px-6 py-3 bg-green-500 text-white rounded-lg shadow-md hover:bg-green-600 transition duration-300 ease-in-out transform hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-green-400"
           >
             Record a Payment
+          </button>
+          <button
+            onClick={() => exportExpensesToExcel(expenses)}
+            className="px-6 py-3 bg-yellow-500 text-white rounded-lg shadow-md hover:bg-yellow-600 transition duration-300"
+          >
+            Export Expenses to Excel
           </button>
         </div>
 
