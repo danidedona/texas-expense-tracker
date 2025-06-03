@@ -19,8 +19,8 @@ import {
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 
-const exportExpensesToExcel = (expenses) => {
-  const rows = [];
+const exportExpensesToExcel = (expenses, payments = []) => {
+  const expenseRows = [];
 
   expenses.forEach((expense) => {
     const {
@@ -42,7 +42,6 @@ const exportExpensesToExcel = (expenses) => {
       "Equally Split?": splitType === "equal" ? 1 : 0,
     };
 
-    // Fill in shares per participant
     participants.forEach((person) => {
       let shareUSD = 0;
       if (splitType === "equal") {
@@ -53,22 +52,28 @@ const exportExpensesToExcel = (expenses) => {
         shareUSD = parseFloat(allocations[person] || 0);
       }
 
-      baseRow[`${person}’s Share (USD)`] = parseFloat(shareUSD.toFixed(2));
+      baseRow[`${person}'s Share (USD)`] = parseFloat(shareUSD.toFixed(2));
     });
 
-    rows.push(baseRow);
+    expenseRows.push(baseRow);
   });
 
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Expense Tracker");
+  const paymentRows = payments.map((payment) => ({
+    Date: payment.date,
+    Payer: payment.payer,
+    Receiver: payment.receiver,
+    Amount: parseFloat(payment.amount).toFixed(2),
+  }));
 
-  const excelBuffer = XLSX.write(workbook, {
-    bookType: "xlsx",
-    type: "array",
-  });
+  const wb = XLSX.utils.book_new();
+  const expenseSheet = XLSX.utils.json_to_sheet(expenseRows);
+  const paymentSheet = XLSX.utils.json_to_sheet(paymentRows);
 
-  const blob = new Blob([excelBuffer], { type: "application/octet-stream" });
+  XLSX.utils.book_append_sheet(wb, expenseSheet, "Expenses");
+  XLSX.utils.book_append_sheet(wb, paymentSheet, "Payments");
+
+  const buffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const blob = new Blob([buffer], { type: "application/octet-stream" });
   saveAs(blob, "TexasHouseExpenses.xlsx");
 };
 
@@ -106,8 +111,10 @@ function App() {
   const [editingExpense, setEditingExpense] = useState(null); // Stores the expense object being edited
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState(""); // 'success' or 'error'
+  const [showPaymentLog, setShowPaymentLog] = useState(false);
 
   // Initialize Firebase services and handle authentication
+
   useEffect(() => {
     let firebaseAppInstance;
     try {
@@ -178,7 +185,14 @@ function App() {
             newDebts[p][paidBy] += share;
           }
         });
-      } else if (splitType === "percent" || splitType === "custom") {
+      } else if (splitType === "percent") {
+        for (const [p, percent] of Object.entries(allocations)) {
+          const share = (amount * parseFloat(percent)) / 100;
+          if (p !== paidBy) {
+            newDebts[p][paidBy] += share;
+          }
+        }
+      } else if (splitType === "custom") {
         for (const [p, val] of Object.entries(allocations)) {
           const share = parseFloat(val);
           if (p !== paidBy) {
@@ -519,7 +533,19 @@ function App() {
             Record a Payment
           </button>
           <button
-            onClick={() => exportExpensesToExcel(expenses)}
+            onClick={() => {
+              setShowAddExpenseForm(false);
+              setShowSettlements(false);
+              setShowRecordPaymentForm(false);
+              setShowPaymentLog(true);
+              setEditingExpense(null);
+            }}
+            className="px-6 py-3 bg-indigo-500 text-white rounded-lg shadow-md hover:bg-indigo-600 transition duration-300"
+          >
+            View Payment Log
+          </button>
+          <button
+            onClick={() => exportExpensesToExcel(expenses, payments)}
             className="px-6 py-3 bg-yellow-500 text-white rounded-lg shadow-md hover:bg-yellow-600 transition duration-300"
           >
             Export Expenses to Excel
@@ -554,6 +580,8 @@ function App() {
             onEditExpense={handleEditExpenseClick}
           />
         )}
+
+        {showPaymentLog && <PaymentLog payments={payments} />}
       </div>
     </div>
   );
@@ -1418,6 +1446,33 @@ function BalancesDisplay({ balances, people }) {
             ))
         )}
       </ul>
+    </div>
+  );
+}
+
+function PaymentLog({ payments }) {
+  return (
+    <div className="bg-gray-50 p-6 rounded-lg shadow-inner">
+      <h2 className="text-2xl font-semibold text-indigo-700 mb-6 border-b pb-2">
+        Payment Log
+      </h2>
+      {payments.length === 0 ? (
+        <p className="text-gray-600">No payments recorded yet.</p>
+      ) : (
+        <ul className="list-disc list-inside space-y-2 text-gray-800">
+          {payments.map((payment) => (
+            <li
+              key={
+                payment.id ||
+                `${payment.payer}-${payment.receiver}-${payment.date}`
+              }
+            >
+              {payment.payer} paid {payment.receiver} $
+              {Number(payment.amount).toFixed(2)} on {payment.date}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
