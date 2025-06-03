@@ -105,12 +105,13 @@ function App() {
   const [payments, setPayments] = useState([]); // New state for payments
   const [balances, setBalances] = useState({});
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const [showAddExpenseForm, setShowAddExpenseForm] = useState(false);
-  const [showSettlements, setShowSettlements] = useState(false);
-  const [showRecordPaymentForm, setShowRecordPaymentForm] = useState(false); // New state for payment form
   const [editingExpense, setEditingExpense] = useState(null); // Stores the expense object being edited
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState(""); // 'success' or 'error'
+
+  const [showAddExpenseForm, setShowAddExpenseForm] = useState(true);
+  const [showSettlements, setShowSettlements] = useState(false);
+  const [showRecordPaymentForm, setShowRecordPaymentForm] = useState(false);
   const [showPaymentLog, setShowPaymentLog] = useState(false);
   const [showSpreadsheetPreview, setShowSpreadsheetPreview] = useState(false);
 
@@ -587,8 +588,8 @@ function App() {
               setShowAddExpenseForm(false);
               setShowSettlements(false);
               setShowRecordPaymentForm(false);
-              setShowPaymentLog(true);
-              setEditingExpense(null);
+              setShowSpreadsheetPreview(false);
+              setShowPaymentLog(true); // <- enables PaymentLog
             }}
             className="px-6 py-3 bg-indigo-500 text-white rounded-lg shadow-md hover:bg-indigo-600 transition duration-300"
           >
@@ -639,7 +640,7 @@ function App() {
           />
         )}
 
-        {!showAddExpenseForm && !showSettlements && !showRecordPaymentForm && (
+        {showPaymentLog && (
           <ExpenseList
             expenses={expenses}
             onDeleteExpense={handleDeleteExpense}
