@@ -1405,7 +1405,7 @@ function BalancesDisplay({ balances, people }) {
       </h3>
       {settlementSuggestions.length === 0 ? (
         <p className="text-gray-600">
-          Everyone is settled up, or no outstanding balances!
+          Everyone is settled up, or no outstanding balances!!
         </p>
       ) : (
         <ul className="list-disc list-inside space-y-2 text-gray-800">
