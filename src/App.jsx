@@ -98,75 +98,88 @@ function App() {
     }
   }, []); // Empty dependency array means this runs once on mount
 
-  // Function to calculate balances
-  const calculateBalances = useCallback(() => {
-    const newBalances = {};
-    PEOPLE.forEach((person) => {
-      newBalances[person] = { paid: 0, owed: 0, balance: 0 };
+  // Function to calculate debts
+  const calculateDebts = useCallback(() => {
+    const newDebts = {}; // Format: { [payer]: { [receiver]: amountOwed } }
+
+    PEOPLE.forEach((p1) => {
+      newDebts[p1] = {};
+      PEOPLE.forEach((p2) => {
+        if (p1 !== p2) newDebts[p1][p2] = 0;
+      });
     });
 
-    // First, calculate balances from expenses
+    // 1. Handle expenses
     expenses.forEach((expense) => {
-      const paidBy = expense.paidBy;
-      const totalAmount = parseFloat(expense.totalAmount);
+      const { paidBy, totalAmount, participants, splitType, allocations } =
+        expense;
+      const amount = parseFloat(totalAmount);
 
-      if (newBalances[paidBy]) {
-        newBalances[paidBy].paid += totalAmount;
-      }
-
-      // Calculate individual shares
-      if (expense.splitType === "equal") {
-        const numParticipants = expense.participants.length;
-        if (numParticipants > 0) {
-          const share = totalAmount / numParticipants;
-          expense.participants.forEach((p) => {
-            if (newBalances[p]) {
-              newBalances[p].owed += share;
-            }
-          });
-        }
-      } else if (expense.splitType === "percent") {
-        for (const person in expense.allocations) {
-          if (newBalances[person]) {
-            const percentage = parseFloat(expense.allocations[person]);
-            newBalances[person].owed += (totalAmount * percentage) / 100;
+      if (splitType === "equal") {
+        const share = amount / participants.length;
+        participants.forEach((p) => {
+          if (p !== paidBy) {
+            newDebts[p][paidBy] += share;
+          }
+        });
+      } else if (splitType === "percent" || splitType === "custom") {
+        for (const [p, val] of Object.entries(allocations)) {
+          const share = parseFloat(val);
+          if (p !== paidBy) {
+            newDebts[p][paidBy] += share;
           }
         }
-      } else if (
-        expense.splitType === "custom" ||
-        expense.splitType === "weekly"
-      ) {
-        for (const person in expense.allocations) {
-          if (newBalances[person]) {
-            newBalances[person].owed += parseFloat(expense.allocations[person]);
-          }
+      } else if (splitType === "weekly") {
+        const p = expense.weeklyDetails?.personPayingWeekly;
+        if (p && p !== paidBy) {
+          newDebts[p][paidBy] += amount;
         }
       }
     });
 
-    // Now, adjust balances based on recorded payments
-    payments.forEach((payment) => {
-      const payer = payment.payer;
-      const receiver = payment.receiver;
-      const amount = parseFloat(payment.amount);
+    // 2. Handle payments (payer paid receiver, so reduce what payer owes receiver)
+    payments.forEach(({ payer, receiver, amount }) => {
+      if (payer === receiver) return; // Skip self-payments
 
-      if (newBalances[payer]) {
-        // Payer's 'paid' amount increases, effectively reducing their net debt
-        newBalances[payer].paid += amount;
-      }
-      if (newBalances[receiver]) {
-        // Receiver's 'owed' amount decreases, effectively reducing their net credit
-        newBalances[receiver].owed -= amount;
-      }
+      const amt = parseFloat(amount);
+      if (!newDebts[payer]) newDebts[payer] = {};
+      if (!newDebts[payer][receiver]) newDebts[payer][receiver] = 0;
+      newDebts[payer][receiver] -= amt;
     });
 
-    PEOPLE.forEach((person) => {
-      newBalances[person].balance =
-        newBalances[person].paid - newBalances[person].owed;
+    // 3. Normalize debts (convert negative debts into reverse positive ones)
+    PEOPLE.forEach((p1) => {
+      PEOPLE.forEach((p2) => {
+        if (p1 !== p2) {
+          const amt = newDebts[p1][p2];
+          if (amt < 0) {
+            newDebts[p2][p1] += -amt;
+            newDebts[p1][p2] = 0;
+          }
+        }
+      });
     });
 
-    setBalances(newBalances);
-  }, [expenses, payments]); // Add payments to dependency array
+    // 4. Cancel out mutual debts
+    PEOPLE.forEach((p1) => {
+      PEOPLE.forEach((p2) => {
+        if (p1 !== p2) {
+          const amount1to2 = newDebts[p1]?.[p2] || 0;
+          const amount2to1 = newDebts[p2]?.[p1] || 0;
+
+          if (amount1to2 > amount2to1) {
+            newDebts[p1][p2] = amount1to2 - amount2to1;
+            newDebts[p2][p1] = 0;
+          } else {
+            newDebts[p2][p1] = amount2to1 - amount1to2;
+            newDebts[p1][p2] = 0;
+          }
+        }
+      });
+    });
+
+    setBalances(newDebts); // Note: balances is now a matrix of who owes whom
+  }, [expenses, payments]);
 
   // Fetch expenses from Firestore
   useEffect(() => {
@@ -234,14 +247,15 @@ function App() {
 
   // Recalculate balances whenever expenses or payments change
   useEffect(() => {
+    // Only calculate if expenses or payments have been fetched, or if balances are not yet initialized
     if (
       expenses.length > 0 ||
       payments.length > 0 ||
-      Object.keys(balances).length > 0
+      Object.keys(balances).length === 0
     ) {
-      calculateBalances();
+      calculateDebts();
     }
-  }, [expenses, payments, calculateBalances]);
+  }, [expenses, payments, calculateDebts]);
 
   const showTemporaryMessage = (msg, type = "success") => {
     setMessage(msg);
@@ -424,7 +438,7 @@ function App() {
             }}
             className="px-6 py-3 bg-purple-500 text-white rounded-lg shadow-md hover:bg-purple-600 transition duration-300 ease-in-out transform hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-purple-400"
           >
-            View Balances & Settlements
+            View Who Owes Whom
           </button>
           <button
             onClick={() => {
@@ -687,7 +701,7 @@ function ExpenseForm({ onSave, onCancel, people, initialExpenseData }) {
         return;
       }
       // For weekly, the total amount is assumed to be covered by the specified person
-      // The `totalAmount` field in the form should reflect the total for all weeks.
+      // The totalAmount field in the form should reflect the total for all weeks.
       // We'll set the allocation to that person for the full amount.
       allocations[personPayingWeekly] = amount; // The full totalAmount is allocated to this person
       // Ensure this person is also a participant for proper balance calculation
@@ -1325,97 +1339,23 @@ function ExpenseList({ expenses, onDeleteExpense, onEditExpense }) {
   );
 }
 
-// BalancesDisplay Component (Modified to simplify view)
 function BalancesDisplay({ balances, people }) {
-  const getSettlementSuggestions = () => {
-    const payers = people
-      .filter((p) => balances[p]?.balance > 0)
-      .sort((a, b) => balances[b].balance - balances[a].balance);
-    const receivers = people
-      .filter((p) => balances[p]?.balance < 0)
-      .sort((a, b) => balances[a].balance - balances[b].balance);
-
-    let suggestions = [];
-    let i = 0; // index for payers
-    let j = 0; // index for receivers
-
-    let tempBalances = {};
-    people.forEach((p) => (tempBalances[p] = balances[p]?.balance || 0));
-
-    while (i < payers.length && j < receivers.length) {
-      const payer = payers[i];
-      const receiver = receivers[j];
-
-      const amountToPay = Math.min(
-        tempBalances[payer],
-        Math.abs(tempBalances[receiver])
-      );
-
-      if (amountToPay > 0.01) {
-        // Only suggest if amount is significant
-        suggestions.push(
-          `${receiver} owes ${payer} $${amountToPay.toFixed(2)}`
-        );
-        tempBalances[payer] -= amountToPay;
-        tempBalances[receiver] += amountToPay;
-      }
-
-      if (Math.abs(tempBalances[payer]) < 0.01) {
-        i++;
-      }
-      if (Math.abs(tempBalances[receiver]) < 0.01) {
-        j++;
-      }
-    }
-    return suggestions;
-  };
-
-  const settlementSuggestions = getSettlementSuggestions();
-
   return (
     <div className="bg-gray-50 p-6 rounded-lg shadow-inner">
       <h2 className="text-2xl font-semibold text-purple-700 mb-6 border-b pb-2">
-        Balances & Settlements
+        Who Owes Whom
       </h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-        {people.map((person) => (
-          <div
-            key={person}
-            className="bg-white p-4 rounded-lg shadow-md border border-gray-200"
-          >
-            <h3 className="text-lg font-medium text-gray-800 mb-2">{person}</h3>
-            <p className="text-md font-bold mt-2">
-              Balance:
-              <span
-                className={`ml-2 ${
-                  balances[person]?.balance >= 0
-                    ? "text-green-700"
-                    : "text-red-700"
-                }`}
-              >
-                ${(balances[person]?.balance || 0).toFixed(2)}
-              </span>
-            </p>
-          </div>
-        ))}
-      </div>
-
-      <h3 className="text-xl font-semibold text-purple-700 mb-4 border-b pb-2">
-        Settlement Suggestions
-      </h3>
-      {settlementSuggestions.length === 0 ? (
-        <p className="text-gray-600">
-          Everyone is settled up, or no outstanding balances!!
-        </p>
-      ) : (
-        <ul className="list-disc list-inside space-y-2 text-gray-800">
-          {settlementSuggestions.map((suggestion, index) => (
-            <li key={index} className="bg-purple-50 p-3 rounded-md shadow-sm">
-              {suggestion}
-            </li>
-          ))}
-        </ul>
-      )}
+      <ul className="list-disc list-inside space-y-2 text-gray-800">
+        {people.flatMap((p1) =>
+          people
+            .filter((p2) => p1 !== p2 && (balances?.[p1]?.[p2] || 0) > 0.01)
+            .map((p2) => (
+              <li key={`${p1}->${p2}`}>
+                {p1} owes {p2} ${Number(balances?.[p1]?.[p2] || 0).toFixed(2)}
+              </li>
+            ))
+        )}
+      </ul>
     </div>
   );
 }
